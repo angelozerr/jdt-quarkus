@@ -6,7 +6,7 @@ package io.quarkus.deployment.builditem;
  * A build item that is not part of the standard build, but is only used to generate
  * example config files and docs
  */
-public final class ConfigDescriptionBuildItem /*extends MultiBuildItem*/ implements Comparable<ConfigDescriptionBuildItem> {
+public /*final*/ class ConfigDescriptionBuildItem /*extends MultiBuildItem*/ implements Comparable<ConfigDescriptionBuildItem> {
 
     private final String propertyName;
     private final Class<?> type;

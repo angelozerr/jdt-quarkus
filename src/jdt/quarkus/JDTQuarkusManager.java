@@ -15,12 +15,15 @@ import org.eclipse.core.runtime.CoreException;
 import org.eclipse.core.runtime.NullProgressMonitor;
 import org.eclipse.jdt.core.IAnnotatable;
 import org.eclipse.jdt.core.IAnnotation;
+import org.eclipse.jdt.core.IField;
 import org.eclipse.jdt.core.IJavaElement;
 import org.eclipse.jdt.core.IJavaProject;
 import org.eclipse.jdt.core.IMemberValuePair;
 import org.eclipse.jdt.core.IParent;
+import org.eclipse.jdt.core.IType;
 import org.eclipse.jdt.core.JavaCore;
 import org.eclipse.jdt.core.JavaModelException;
+import org.eclipse.jdt.core.Signature;
 import org.eclipse.jdt.core.search.IJavaSearchConstants;
 import org.eclipse.jdt.core.search.IJavaSearchScope;
 import org.eclipse.jdt.core.search.SearchEngine;
@@ -51,8 +54,8 @@ public class JDTQuarkusManager {
 		return INSTANCE;
 	}
 
-	public List<JDTConfigDescriptionBuildItem> getQuarkusProperties() {
-		List<JDTConfigDescriptionBuildItem> quarkusProperties = new ArrayList<>();
+	public List<ExtendedConfigDescriptionBuildItem> getQuarkusProperties() {
+		List<ExtendedConfigDescriptionBuildItem> quarkusProperties = new ArrayList<>();
 
 		SearchPattern pattern = createQuarkusConfigSearchPattern();
 		SearchEngine engine = new SearchEngine();
@@ -82,7 +85,7 @@ public class JDTQuarkusManager {
 	}
 
 	private void processQuarkusAnnotation(IJavaElement javaElement,
-			List<JDTConfigDescriptionBuildItem> quarkusProperties) throws JavaModelException {
+			List<ExtendedConfigDescriptionBuildItem> quarkusProperties) throws JavaModelException {
 		IAnnotation[] annotations = ((IAnnotatable) javaElement).getAnnotations();
 		for (IAnnotation annotation : annotations) {
 			if (CONFIG_ITEM_ANNOTATION.contentEquals(annotation.getElementName())) {
@@ -96,7 +99,7 @@ public class JDTQuarkusManager {
 	}
 
 	private static void processConfigRoot(IJavaElement javaElement, IAnnotation annotation,
-			List<JDTConfigDescriptionBuildItem> quarkusProperties) throws JavaModelException {
+			List<ExtendedConfigDescriptionBuildItem> quarkusProperties) throws JavaModelException {
 		ConfigPhase configPhase = getConfigPhase(annotation);
 		String configRootAnnotationName = getConfigRootName(annotation);
 		String extension = getExtensionName(getSimpleName(javaElement.getElementName()), configRootAnnotationName,
@@ -104,6 +107,12 @@ public class JDTQuarkusManager {
 		if (extension == null) {
 			return;
 		}
+		String baseKey = "quarkus." + extension;
+		processConfigGroup(javaElement, baseKey, quarkusProperties);
+	}
+
+	private static void processConfigGroup(IJavaElement javaElement, String baseKey,
+			List<ExtendedConfigDescriptionBuildItem> quarkusProperties) throws JavaModelException {
 		if (javaElement.getElementType() == IJavaElement.TYPE) {
 			IJavaElement parent = javaElement.getParent();
 			if (parent.getElementType() == IJavaElement.CLASS_FILE) {
@@ -111,11 +120,11 @@ public class JDTQuarkusManager {
 				IJavaElement[] elements = ((IParent) javaElement).getChildren();
 				for (IJavaElement child : elements) {
 					if (child.getElementType() == IJavaElement.FIELD) {
-						String baseKey = "quarkus." + extension;
-						final IAnnotation configItemAnnotation = getAnnotation((IAnnotatable) child,
+						IField field = (IField) child;
+						final IAnnotation configItemAnnotation = getAnnotation((IAnnotatable) field,
 								CONFIG_ITEM_ANNOTATION);
-						String name = configItemAnnotation == null ? hyphenate(child.getElementName())
-								: (String) getMemberValue(annotation, "name");
+						String name = configItemAnnotation == null ? hyphenate(field.getElementName())
+								: (String) getAnnotationMemberValue(configItemAnnotation, "name");
 						if (name == null) {
 							name = ConfigItem.HYPHENATED_ELEMENT_NAME;
 						}
@@ -125,28 +134,63 @@ public class JDTQuarkusManager {
 							subKey = baseKey;
 							consume = false;
 						} else if (name.equals(ConfigItem.ELEMENT_NAME)) {
-							subKey = baseKey + "." + child.getElementName();
+							subKey = baseKey + "." + field.getElementName();
 							consume = true;
 						} else if (name.equals(ConfigItem.HYPHENATED_ELEMENT_NAME)) {
-							subKey = baseKey + "." + hyphenate(child.getElementName());
+							subKey = baseKey + "." + hyphenate(field.getElementName());
 							consume = true;
 						} else {
 							subKey = baseKey + "." + name;
 							consume = true;
 						}
 						final String defaultValue = configItemAnnotation == null ? ConfigItem.NO_DEFAULT
-								: (String) getMemberValue(annotation, "defaultValue");
+								: (String) getAnnotationMemberValue(configItemAnnotation, "defaultValue");
+						
+//						javaElement.getJavaModel().
+//						BinaryType binaryType = (BinaryType) classFile.getType();
+//						if (matchBinary(pattern, info, null)) {
+//							binaryType = new ResolvedBinaryType((JavaElement) binaryType.getParent(), binaryType.getElementName(), binaryType.getKey());
+//							locator.reportBinaryMemberDeclaration(null, binaryType, null, info, SearchMatch.A_ACCURATE);
+//							return;
+//						}
+						
+						IType fieldClass = getFieldType(field);
+						//fieldClass.getOpenable().open(new NullProgressMonitor());
+						final IAnnotation configGroupAnnotation = getAnnotation((IAnnotatable) fieldClass,
+								CONFIG_GROUP_ANNOTATION);
+						if (configGroupAnnotation != null) {									
+							processConfigGroup(fieldClass, subKey, quarkusProperties);
+						} else {
 
-						String propertyName =  subKey;
-						Class<?> type = null;
-						String docs = null;
-						quarkusProperties
-								.add(new JDTConfigDescriptionBuildItem(propertyName, type, defaultValue, docs));
+							String propertyName = subKey;
+							String type = fieldClass != null ? fieldClass.getFullyQualifiedName() : null;
+							String docs = null;
 
+							ExtendedConfigDescriptionBuildItem property = new ExtendedConfigDescriptionBuildItem();
+							property.setPropertyName(propertyName);
+							property.setType(type);
+							property.setDefaultValue(defaultValue);
+							property.setDocs(docs);
+							quarkusProperties.add(property);
+						}
 					}
 				}
 			}
 		}
+	}
+	
+	private static IType getFieldType(IField field) {
+	    try {
+	        String signature = field.getTypeSignature();
+	        IType primaryType = field.getTypeRoot().findPrimaryType();
+	        String name = JavaModelUtil.getResolvedTypeName(signature, primaryType);
+	        if (name == null) {
+	            return null;
+	        }
+	        return field.getJavaProject().findType(name);
+	    } catch (JavaModelException e) {
+	        return null;
+	    }
 	}
 
 	private static String getSimpleName(String elementName) {
@@ -155,7 +199,7 @@ public class JDTQuarkusManager {
 	}
 
 	private static String getConfigRootName(IAnnotation annotation) {
-		String value = (String) getMemberValue(annotation, "name");
+		String value = (String) getAnnotationMemberValue(annotation, "name");
 		if (value != null) {
 			return value;
 		}
@@ -163,7 +207,7 @@ public class JDTQuarkusManager {
 	}
 
 	private static ConfigPhase getConfigPhase(IAnnotation annotation) {
-		String value = (String) getMemberValue(annotation, "phase");
+		String value = (String) getAnnotationMemberValue(annotation, "phase");
 		if (value != null) {
 			if (value.endsWith(ConfigPhase.RUN_TIME.name())) {
 				return ConfigPhase.RUN_TIME;
@@ -206,30 +250,32 @@ public class JDTQuarkusManager {
 	}
 
 	private static void processConfigItem(IJavaElement javaElement, IAnnotation annotation,
-			List<JDTConfigDescriptionBuildItem> quarkusProperties) {
+			List<ExtendedConfigDescriptionBuildItem> quarkusProperties) {
 		String name = javaElement.getElementName();
 		System.err.println(name);
 	}
 
 	private static void processConfigProperty(IJavaElement javaElement, IAnnotation annotation,
-			List<JDTConfigDescriptionBuildItem> quarkusProperties) {
+			List<ExtendedConfigDescriptionBuildItem> quarkusProperties) {
 		String name = javaElement.getElementName();
 		System.err.println(name);
 	}
 
 	private static IAnnotation getAnnotation(IAnnotatable annotatable, String annotationName)
 			throws JavaModelException {
+		if (annotatable == null) {
+			return null;
+		}
 		IAnnotation[] annotations = annotatable.getAnnotations();
 		for (IAnnotation annotation : annotations) {
 			if (annotationName.equals(annotation.getElementName())) {
 				return annotation;
 			}
 		}
-
 		return null;
 	}
 
-	public static Object getMemberValue(IAnnotation annotation, String memberName) {
+	public static Object getAnnotationMemberValue(IAnnotation annotation, String memberName) {
 		try {
 			for (IMemberValuePair pair : annotation.getMemberValuePairs()) {
 				if (memberName.equals(pair.getMemberName())) {

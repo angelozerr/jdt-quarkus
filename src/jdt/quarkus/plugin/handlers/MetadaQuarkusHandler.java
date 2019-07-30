@@ -15,7 +15,7 @@ import org.eclipse.ui.handlers.HandlerUtil;
 import com.google.gson.Gson;
 
 import jdt.quarkus.JDTQuarkusManager;
-import jdt.quarkus.JDTConfigDescriptionBuildItem;
+import jdt.quarkus.ExtendedConfigDescriptionBuildItem;
 
 public class MetadaQuarkusHandler extends AbstractHandler {
 
@@ -31,7 +31,7 @@ public class MetadaQuarkusHandler extends AbstractHandler {
 		// https://github.com/quarkusio/quarkus-quickstarts/tree/master/getting-started
 		IProject p = ResourcesPlugin.getWorkspace().getRoot().getProject("getting-started");
 		IJavaProject project = JavaCore.create(p);
-		List<JDTConfigDescriptionBuildItem> properties =   JDTQuarkusManager.getInstance().getQuarkusProperties();
+		List<ExtendedConfigDescriptionBuildItem> properties =   JDTQuarkusManager.getInstance().getQuarkusProperties();
 		String s = new Gson().toJson(properties);
 		System.err.println(s);
 		return null;
